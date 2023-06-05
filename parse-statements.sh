@@ -86,7 +86,12 @@ AWK_FUNCTIONS=$(cat <<- %E%O%T%
 			return("")
 	}
 
-	function writecsv() {
+	function writecsv(s) {
+		type = s
+
+		if (header > 0)
+			printf("\"Account Type\",\"Account Number\",\"Transaction Date\",\"Cheque Number\",\"Description 1\",\"Description 2\",\"CAD$\",\"USD$\"\n")
+
 		for (line = 1; line <= lines; line++) {
 			split(text[line], a, "^")
 
@@ -103,8 +108,8 @@ AWK_FUNCTIONS=$(cat <<- %E%O%T%
 			} else
 				isodate = fixdate(sprintf("%s %s 0 0 0", fromyear, date))
 
-			printf("\"Chequing\",\"%s\",%s,\"\",\"%s\",\"%s\",%s,\"\"\n", \
-					account, isodate, activity, desc2, amount)
+			printf("\"%s\",\"%s\",%s,\"\",\"%s\",\"%s\",%s,\"\"\n", \
+					type, account, isodate, activity, desc2, amount)
 		}
 	}
 
@@ -166,19 +171,37 @@ parse_visa () {
 							activity = trim(substr($0, col3, col4 - col3))
 							amount = trim(gensub(/[\$,]/, "", "g", substr($0, col4, col5 - col4))) * -1
 
-							# Always 2 line activity
-							if (getline > 0) {
-								dbg(" > 2line")
-								desc2 = trim(substr($0, col3, col4 - col3))
+							# One line exceptions
+							i = 1
+							switch (activity) {
+							case "BALANCEPROTECTOR PREMIUM":
+							case "PROVINCIAL TAX":
+							case "OVERLIMIT FEE":
+							case "ANNUAL FEE REBATE":
+							case /^PURCHASE INTEREST /:
+							case /^CASH ADVANCE INTEREST /:
+								desc2 = ""
+								break
+							default:
+								# read up to 2 more lines searching for the transaction number
+								while (i <= 3 && getline > 0) {
+									i++; dbg(sprintf(" > %dline", i))
+									desc2 = trim(substr($0, col3, col4 - col3))
+
+									if (desc2 ~ /^[[:digit:]]+$/)
+										break
+								}
+							}
+
+							if (i <= 3) {
+								text[++line] = sprintf("%s^%s^%s^%s", pdate, activity, desc2, amount)
+								dbg2(sprintf(">%s^%s^%s^%s<", pdate, activity, desc2, amount))
 							} else {
 								dbg("??? unxpected EOF")
 								rc = 99
 
 								break;
 							}
-
-							text[++line] = sprintf("%s^%s^%s^%s", pdate, activity, desc2, amount)
-							dbg2(sprintf(">%s^%s^%s^%s<", pdate, activity, desc2, amount))
 						}
 					}
 				}
@@ -254,10 +277,7 @@ parse_visa () {
 				exit(1)
 			}
 
-			if ( header == 1 )
-				printf("\"Account Type\",\"Account Number\",\"Transaction Date\",\"Cheque Number\",\"Description 1\",\"Description 2\",\"CAD$\",\"USD$\"\n")
-
-			writecsv()
+			writecsv("Visa")
 
 			exit(rc)
 		}'
@@ -295,8 +315,8 @@ parse_chequing () {
 				date = trim(substr($0, col1, col2 - col1))
 				activity = trim(substr($0, col2, col3 - col2))
 				desc2 = ""
-				withdrawal = trim(substr($0, col3, col4 - col3))
-				deposit = trim(substr($0, col4, col5 - col4))
+				withdrawal = trim(gensub(/[\$,]/, "", "g", substr($0, col3, col4 - col3)))
+				deposit = trim(gensub(/[\$,]/, "", "g", substr($0, col4, col5 - col4)))
 
 				if (save == 1 && length($0) == 0) {
 					dbg(" > end")
@@ -320,8 +340,8 @@ parse_chequing () {
 								dbg(" > 2line")
 								if (getline > 0) {
 									desc2 = trim(substr($0, col2, col3 - col2))
-									withdrawal = trim(substr($0, col3, col4 - col3))
-									deposit = trim(substr($0, col4, col5 - col4))
+									withdrawal = trim(gensub(/[\$,]/, "", "g", substr($0, col3, col4 - col3)))
+									deposit = trim(gensub(/[\$,]/, "", "g", substr($0, col4, col5 - col4)))
 								} else {
 									dbg("??? unxpected EOF")
 									rc = 99
@@ -329,7 +349,6 @@ parse_chequing () {
 									break;
 								}
 							}
-
 
 							if (length(withdrawal) > 1)
 								amount = sprintf("-%s", withdrawal)
@@ -351,13 +370,23 @@ parse_chequing () {
 						break
 					}
 
+					if (length(date) > 0) {
+						isodate = fixdate(sprintf("%s %s 0 0 0", fromyear, date))
+						if (length(isodate) > 0)
+							lastdate = date
+						else
+							continue
+					} else {
+						date = lastdate
+					}
+
 					if (length(withdrawal) == 0 && length(deposit) == 0) {
 						# 2 line activity
 						dbg(" > 2line")
 						if (getline > 0) {
 							desc2 = trim(substr($0, col2, col3 - col2))
-							withdrawal = trim(substr($0, col3, col4 - col3))
-							deposit = trim(substr($0, col4, col5 - col4))
+							withdrawal = trim(gensub(/[\$,]/, "", "g", substr($0, col3, col4 - col3)))
+							deposit = trim(gensub(/[\$,]/, "", "g", substr($0, col4, col5 - col4)))
 						} else {
 							dbg("??? unxpected EOF")
 							rc = 99
@@ -370,8 +399,6 @@ parse_chequing () {
 						amount = sprintf("-%s", withdrawal)
 					else
 						amount = deposit
-
-					if (length(date) == 0) date = lastdate
 
 					text[++line] = sprintf("%s^%s^%s^%s", date, activity, desc2, amount)
 					dbg2(sprintf(">%s^%s^%s^%s<", date, activity, desc2, amount))
@@ -444,10 +471,7 @@ parse_chequing () {
 				exit(1)
 			}
 
-			if (header > 0)
-				printf("\"Account Type\",\"Account Number\",\"Transaction Date\",\"Cheque Number\",\"Description 1\",\"Description 2\",\"CAD$\",\"USD$\"\n")
-
-			writecsv()
+			writecsv("Chequing")
 
 			exit(rc)
 		}'
