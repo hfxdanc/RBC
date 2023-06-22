@@ -108,8 +108,13 @@ AWK_FUNCTIONS=$(cat <<- %E%O%T%
 			} else
 				isodate = fixdate(sprintf("%s %s 0 0 0", fromyear, date))
 
+			if (rbccsv == 1)
+				date = strftime("%m/%d/%Y", mktime(sprintf("%s 0 0 0", gensub(/-/, " ", "g", isodate))))
+			else
+				date = isodate
+
 			printf("\"%s\",\"%s\",%s,\"\",\"%s\",\"%s\",%s,\"\"\n", \
-					type, account, isodate, activity, desc2, amount)
+					type, account, date, activity, desc2, amount)
 		}
 	}
 
@@ -123,7 +128,7 @@ parse_visa () {
 	local header="$2" && header=${header:-0}
 
 	# shellcheck disable=SC2002
-	cat "$file" | awk -v header="$header" -v filename="$file" -e "$AWK_FUNCTIONS" -e '
+	cat "$file" | awk -v header="$header" -v filename="$file" -v rbccsv="$RBCCSV" -e "$AWK_FUNCTIONS" -e '
 		function dbg(s) { if (ENVIRON["DBG"] >= 2) printf("DBG \"%s\" : %s\n", s, $0) > "/dev/stderr" }
 		function dbg2(s) { if (ENVIRON["DBG"] == 3) printf("DBG \"%s\" : %s\n", s, $0) > "/dev/stderr" }
 
@@ -292,7 +297,7 @@ parse_chequing () {
 	local header="$2" && header=${header:-0}
 
 	# shellcheck disable=SC2002
-	cat "$file" | awk -v header="$header" -v filename="$file" -e "$AWK_FUNCTIONS" -e '
+	cat "$file" | awk -v header="$header" -v filename="$file" -v rbccsv="$RBCCSV" -e "$AWK_FUNCTIONS" -e '
 		function dbg(s) { if (ENVIRON["DBG"] >= 2) printf("DBG \"%s\" : %s\n", s, $0) > "/dev/stderr" }
 		function dbg2(s) { if (ENVIRON["DBG"] == 3) printf("DBG \"%s\" : %s\n", s, $0) > "/dev/stderr" }
 
@@ -486,6 +491,7 @@ parse_chequing () {
 IDIR=$1
 ODIR=$2
 HEADER=0
+RBCCSV=${RBCCSV:-1}
 
 if [ -z "$IDIR" ]; then
 	echo 2>&1 "Error: Need to specify directory for input .pdf files"
@@ -493,7 +499,8 @@ if [ -z "$IDIR" ]; then
 	exit
 fi
 
-[ -z "$ODIR" ] && ODIR="."
+[ -z "$ODIR" ] && ODIR=$(mktemp -d)
+[ $DBG -eq 0 ] && trap "rm -rf $ODIR" EXIT INT
 
 # shellcheck disable=SC2010,SC2034
 ls -1 "$IDIR" | grep -E '[Pp][Dd][Ff]$' | sed 's/ /^/g' | while read -r file junk; do
@@ -523,3 +530,4 @@ ls -1 "$IDIR" | grep -E '[Pp][Dd][Ff]$' | sed 's/ /^/g' | while read -r file jun
 	fi
 done
 
+[ $DBG -ne 0 ] && echo 2>&1 "Temporary files stored in $ODIR"
