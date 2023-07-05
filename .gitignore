@@ -1,0 +1,9 @@
+new_transactions.sql
+datafiles/*
+!datafiles/*-example
+!datafiles/mcc.csv
+!datafiles/budget_categories.csv
+*.swp
+*.orig
+*~
+\#*#
